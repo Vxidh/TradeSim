@@ -1,24 +1,40 @@
 #pragma once
 
-#include <deque>
 #include <map>
+#include <vector>
 #include <memory>
 #include <string>
-#include <unordered_map>
-
+#include <cstdint>
 #include "Order.h"
-
-using PriceLevel = std::deque<std::unique_ptr<Order>>;
 
 class OrderBook {
 public:
-    void addOrder(std::unique_ptr<Order> order);
-    void cancelOrder(int orderId);
-    const std::map<double, PriceLevel>& getBids() const;
+    using OrderPtr = std::unique_ptr<Order>;
+
+    OrderBook(std::string symbol) : symbol_(std::move(symbol)), next_trade_id_(1) {}
+
+    // add/cancel
+    std::vector<Trade> addOrder(OrderPtr order);
+    void cancelOrder(int32_t orderId);
+
+    // access
+    const std::map<double, PriceLevel, std::greater<double>>& getBids() const;
     const std::map<double, PriceLevel>& getAsks() const;
-    
+
 private:
-    std::map<double, PriceLevel> bids_;
+    std::string symbol_;
+    int32_t next_trade_id_;
+
+    std::map<double, PriceLevel, std::greater<double>> bids_;
     std::map<double, PriceLevel> asks_;
-    std::unordered_map<int32_t, Order*> orders_by_id_;
+
+    std::map<int32_t, OrderPtr> orders_by_id_;
+    std::vector<Order*> stop_orders_;
+    std::vector<Order*> pending_triggered_stops_;
+
+    // core logic
+    std::vector<Trade> match(Order* aggressing_order);
+    void addLimitOrder(Order* order);
+    void checkStopOrders(const Trade& trade);
+    void processPendingTriggeredStops(std::vector<Trade>& trades_made);
 };
