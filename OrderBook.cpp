@@ -167,7 +167,7 @@ void OrderBook::addLimitOrder(Order* order) {
 }
 
 void OrderBook::checkStopOrders(const Trade& trade) {
-    //Assume that all trades happen at 150$ and I want to buy at 145$. In this cas e
+    //Assume that all trades happen at 150$ and I want to buy at 145$. In this case I need an option where the order needs to be dormant without interfering with the main asks_ map.
 
     vector<Order*> to_trigger;
     to_trigger.reserve(stop_orders_.size());
