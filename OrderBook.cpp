@@ -72,6 +72,7 @@ vector<Trade> OrderBook::match(Order* aggressing_order) {
             }
 
             auto resting_it = resting_orders.begin();
+            //aggressing_order->quantity > 0 is to make sure that as long as our buyer wants to buy shares we still have sellers
             while (aggressing_order->quantity > 0 && resting_it != resting_orders.end()) {
                 Order* resting_order = *resting_it;
                 int32_t trade_quantity = min(aggressing_order->quantity, resting_order->quantity);
@@ -166,7 +167,8 @@ void OrderBook::addLimitOrder(Order* order) {
 }
 
 void OrderBook::checkStopOrders(const Trade& trade) {
-    // collect triggers into 'to_trigger' to avoid modifying stop_orders_ while iterating
+    //Assume that all trades happen at 150$ and I want to buy at 145$. In this cas e
+
     vector<Order*> to_trigger;
     to_trigger.reserve(stop_orders_.size());
 
