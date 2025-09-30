@@ -50,10 +50,23 @@
     <!-- Main Dashboard Grid -->
     <main class="grid grid-cols-1 lg:grid-cols-4 gap-4">
 
+        <!-- Stock Selector -->
+        <div class="mb-4">
+            <label for="symbol-select" class="text-gray-300 font-semibold mr-2">Select Stock:</label>
+            <select id="symbol-select" class="bg-gray-900 text-gray-200 p-2 rounded-md">
+                <option value="RELIANCE">RELIANCE</option>
+                <option value="AAPL">AAPL</option>
+                <option value="MSFT">MSFT</option>
+                <option value="GOOG">GOOG</option>
+                <option value="AMZN">AMZN</option>
+                <option value="META">META</option>
+                <option value="TSLA">TSLA</option>
+            </select>
+        </div>
         <!-- Column 1: Chart & Order Entry -->
         <div class="lg:col-span-2 flex flex-col space-y-4">
             <div class="bg-gray-800 p-4 rounded-lg shadow-lg h-full flex flex-col">
-                <h2 class="text-lg font-semibold mb-2 text-gray-300">Market: RELIANCE (1 min)</h2>
+                <h2 class="text-lg font-semibold mb-2 text-gray-300" id="market-title">Market: RELIANCE (1 min)</h2>
                 <div id="chart-container" class="w-full flex-grow"></div>
             </div>
             <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
@@ -83,9 +96,9 @@
         </div>
 
         <!-- Column 3: Trade Feed -->
-        <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+        <div class="bg-gray-800 p-4 rounded-lg shadow-lg flex flex-col" style="height:500px; min-height:300px; justify-content:flex-start;">
             <h2 class="text-lg font-semibold mb-2 text-gray-300">Trade Feed</h2>
-            <div id="trade-feed-container" class="font-mono text-sm space-y-1 h-[500px] overflow-y-auto">
+            <div id="trade-feed-container" class="font-mono text-sm space-y-1 overflow-y-auto" style="flex:1; min-height:0; align-items:flex-start;">
             </div>
         </div>
     </main>
@@ -96,7 +109,8 @@
     // --- GLOBAL STATE ---
     let chart = null;
     let candlestickSeries = null;
-    let selectedSide = 'buy'; 
+    let selectedSide = 'buy';
+    let selectedSymbol = 'RELIANCE';
     // --- Socket.IO ---
     const socket = io('http://127.0.0.1:5000');
 
@@ -148,10 +162,11 @@
 
         async function fetchInitialData() {
             try {
+                document.getElementById('market-title').textContent = `Market: ${selectedSymbol} (1 min)`;
                 const [marketDataRes, orderBookRes, tradesRes] = await Promise.all([
                     fetch(`${API_BASE_URL}/market_data`),
-                    fetch(`${API_BASE_URL}/orderbook`),
-                    fetch(`${API_BASE_URL}/trades`)
+                    fetch(`${API_BASE_URL}/orderbook?symbol=${selectedSymbol}`),
+                    fetch(`${API_BASE_URL}/trades?symbol=${selectedSymbol}`)
                 ]);
 
                 if (!marketDataRes.ok || !orderBookRes.ok || !tradesRes.ok) {
@@ -159,16 +174,34 @@
                 }
 
                 const marketData = await marketDataRes.json();
-                if (candlestickSeries) {
-                    candlestickSeries.setData(marketData);
-                } else {
-                    console.error("Cannot set data because candlestickSeries is null.");
-                }
+                // Re-initialize chart for new symbol
+                const chartContainer = document.getElementById('chart-container');
+                chartContainer.innerHTML = '';
+                chart = LightweightCharts.createChart(chartContainer, {
+                    width: chartContainer.clientWidth,
+                    height: chartContainer.clientHeight,
+                    layout: { backgroundColor: '#1F2937', textColor: 'rgba(255, 255, 255, 0.9)' },
+                    grid: { vertLines: { color: '#2A3443' }, horzLines: { color: '#2A3443' } },
+                    timeScale: { timeVisible: true, secondsVisible: false },
+                });
+                candlestickSeries = chart.addCandlestickSeries({
+                    upColor: '#22c55e', downColor: '#ef4444',
+                    borderDownColor: '#ef4444', borderUpColor: '#22c55e',
+                    wickDownColor: '#ef4444', wickUpColor: '#22c55e',
+                });
+                candlestickSeries.setData(marketData);
+
+                new ResizeObserver(entries => {
+                    if (entries.length === 0 || entries[0].target !== chartContainer) { return; }
+                    const newRect = entries[0].contentRect;
+                    chart.applyOptions({ width: newRect.width, height: newRect.height });
+                }).observe(chartContainer);
 
                 const orderBookData = await orderBookRes.json();
                 renderOrderBook(orderBookData);
 
                 const tradesData = await tradesRes.json();
+                document.getElementById('trade-feed-container').innerHTML = '';
                 tradesData.forEach(trade => renderNewTrade(trade, true));
 
             } catch (error) {
@@ -246,13 +279,12 @@
             const quantity = document.getElementById('quantity-input').value;
 
             if (!quantity || parseInt(quantity) <= 0) {
-                // Using a modal instead of alert()
                 showModal("Please enter a valid quantity.");
                 return;
             }
 
             const order = {
-                symbol: 'RELIANCE',
+                symbol: selectedSymbol,
                 side: selectedSide,
                 type: price ? 'limit' : 'market',
                 quantity: quantity,
@@ -269,6 +301,7 @@
                 const result = await response.json();
                 console.log("Order submission result:", result);
                 document.getElementById('order-form').reset();
+                fetchInitialData();
             } catch (error) {
                 console.error("Error submitting order:", error);
                 showModal(`Error submitting order: ${error.message}`);
@@ -299,6 +332,10 @@
             fetchInitialData();
             setupOrderSideButtons();
             document.getElementById('order-form').addEventListener('submit', handleOrderSubmit);
+            document.getElementById('symbol-select').addEventListener('change', (e) => {
+                selectedSymbol = e.target.value;
+                fetchInitialData();
+            });
         };
     </script>
 </body>
