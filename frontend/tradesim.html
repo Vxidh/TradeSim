@@ -1,0 +1,306 @@
+<!--
+    TradeSim Frontend
+    v4: Final version with locked library version and enhanced debugging.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradeSim - Quantitative Research</title>
+    <!-- TailwindCSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+    <!-- Socket.IO client for real-time updates -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+            color: #E5E7EB;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1F2937; }
+        ::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6B7280; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="p-4">
+
+    <!-- Header Section -->
+    <header class="flex justify-between items-center mb-4">
+        <div class="flex items-center space-x-3">
+            <svg class="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+            <h1 class="text-2xl font-bold text-white">TradeSim</h1>
+        </div>
+        <div id="status-indicator" class="flex items-center space-x-2">
+            <div id="status-dot" class="w-3 h-3 rounded-full bg-red-500"></div>
+            <span id="status-text" class="text-red-400 font-semibold">Disconnected</span>
+        </div>
+    </header>
+
+    <!-- Main Dashboard Grid -->
+    <main class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+
+        <!-- Column 1: Chart & Order Entry -->
+        <div class="lg:col-span-2 flex flex-col space-y-4">
+            <div class="bg-gray-800 p-4 rounded-lg shadow-lg h-full flex flex-col">
+                <h2 class="text-lg font-semibold mb-2 text-gray-300">Market: RELIANCE (1 min)</h2>
+                <div id="chart-container" class="w-full flex-grow"></div>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+                <h2 class="text-lg font-semibold mb-3 text-gray-300">Order Entry</h2>
+                <form id="order-form" class="space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                         <button type="button" id="btn-buy" class="w-full p-2 rounded-md bg-green-600/20 text-green-400 border border-green-600 font-semibold transition hover:bg-green-600/40">BUY</button>
+                         <button type="button" id="btn-sell" class="w-full p-2 rounded-md bg-gray-700 text-gray-400 border border-gray-600 font-semibold transition hover:bg-red-600/40 hover:text-red-400 hover:border-red-600">SELL</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <input type="number" step="any" id="price-input" placeholder="Price (INR)" class="w-full p-2 bg-gray-900 border border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <input type="number" id="quantity-input" placeholder="Quantity" class="w-full p-2 bg-gray-900 border border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <button type="submit" class="w-full p-3 bg-blue-600 text-white font-bold rounded-md transition hover:bg-blue-700">Place Order</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Column 2: Order Book -->
+        <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+            <h2 class="text-lg font-semibold mb-2 text-gray-300">Order Book</h2>
+            <div id="order-book-container" class="font-mono text-sm">
+                <div id="asks-container"></div>
+                <div class="py-1 my-1 border-t border-b border-gray-700 text-center text-gray-500" id="spread-container">--.--</div>
+                <div id="bids-container"></div>
+            </div>
+        </div>
+
+        <!-- Column 3: Trade Feed -->
+        <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+            <h2 class="text-lg font-semibold mb-2 text-gray-300">Trade Feed</h2>
+            <div id="trade-feed-container" class="font-mono text-sm space-y-1 h-[500px] overflow-y-auto">
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // --- CONFIGURATION ---
+    const API_BASE_URL = 'http://127.0.0.1:5000/api';
+    // --- GLOBAL STATE ---
+    let chart = null;
+    let candlestickSeries = null;
+    let selectedSide = 'buy'; 
+    // --- Socket.IO ---
+    const socket = io('http://127.0.0.1:5000');
+
+        function initializeChart() {
+            console.log("Attempting to initialize chart...");
+            
+            // Enhanced check to see if the library is loaded
+            if (typeof LightweightCharts === 'undefined' || !LightweightCharts.createChart) {
+                console.error("LightweightCharts library is not loaded or `createChart` function is missing.");
+                return;
+            }
+            console.log("LightweightCharts library found.");
+
+            const chartContainer = document.getElementById('chart-container');
+            chart = LightweightCharts.createChart(chartContainer, {
+                width: chartContainer.clientWidth,
+                height: chartContainer.clientHeight,
+                layout: { backgroundColor: '#1F2937', textColor: 'rgba(255, 255, 255, 0.9)' },
+                grid: { vertLines: { color: '#2A3443' }, horzLines: { color: '#2A3443' } },
+                timeScale: { timeVisible: true, secondsVisible: false },
+            });
+            console.log("Chart object created:", chart);
+
+            // Defensive check for the method before calling it
+            if (typeof chart.addCandlestickSeries !== 'function') {
+                console.error("The created chart object does NOT have the 'addCandlestickSeries' method. Available methods:", Object.keys(chart));
+                return;
+            }
+            
+            candlestickSeries = chart.addCandlestickSeries({
+                upColor: '#22c55e', downColor: '#ef4444',
+                borderDownColor: '#ef4444', borderUpColor: '#22c55e',
+                wickDownColor: '#ef4444', wickUpColor: '#22c55e',
+            });
+            console.log("Candlestick series added successfully.");
+
+            new ResizeObserver(entries => {
+                if (entries.length === 0 || entries[0].target !== chartContainer) { return; }
+                const newRect = entries[0].contentRect;
+                chart.applyOptions({ width: newRect.width, height: newRect.height });
+            }).observe(chartContainer);
+        }
+
+        async function fetchInitialData() {
+            // ... (rest of the code is unchanged) ...
+        }
+        
+        // ... (All other functions remain the same) ...
+
+        async function fetchInitialData() {
+            try {
+                const [marketDataRes, orderBookRes, tradesRes] = await Promise.all([
+                    fetch(`${API_BASE_URL}/market_data`),
+                    fetch(`${API_BASE_URL}/orderbook`),
+                    fetch(`${API_BASE_URL}/trades`)
+                ]);
+
+                if (!marketDataRes.ok || !orderBookRes.ok || !tradesRes.ok) {
+                    throw new Error('Failed to fetch initial data');
+                }
+
+                const marketData = await marketDataRes.json();
+                if (candlestickSeries) {
+                    candlestickSeries.setData(marketData);
+                } else {
+                    console.error("Cannot set data because candlestickSeries is null.");
+                }
+
+                const orderBookData = await orderBookRes.json();
+                renderOrderBook(orderBookData);
+
+                const tradesData = await tradesRes.json();
+                tradesData.forEach(trade => renderNewTrade(trade, true));
+
+            } catch (error) {
+                console.error("Error fetching initial data:", error);
+            }
+        }
+        
+        // --- Socket.IO event handlers ---
+        socket.on('connect', () => {
+            console.log("Socket.IO connected.");
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            statusDot.className = 'w-3 h-3 rounded-full bg-green-500';
+            statusText.textContent = 'Connected';
+            statusText.className = 'text-green-400 font-semibold';
+        });
+
+        socket.on('disconnect', () => {
+            console.log("Socket.IO disconnected.");
+            const statusDot = document.getElementById('status-dot');
+            const statusText = document.getElementById('status-text');
+            statusDot.className = 'w-3 h-3 rounded-full bg-red-500';
+            statusText.textContent = 'Disconnected';
+            statusText.className = 'text-red-400 font-semibold';
+        });
+
+        socket.on('new_trade', (data) => {
+            renderNewTrade(data);
+            if (candlestickSeries && data.timestamp) {
+                const lastBar = {
+                    time: Math.floor(data.timestamp / 1000),
+                    open: data.price,
+                    high: data.price,
+                    low: data.price,
+                    close: data.price
+                };
+                candlestickSeries.update(lastBar);
+            }
+        });
+
+        socket.on('order_book_update', (data) => {
+            renderOrderBook(data);
+        });
+
+        function renderOrderBook(data) {
+            const bidsContainer = document.getElementById('bids-container');
+            const asksContainer = document.getElementById('asks-container');
+            
+            asksContainer.innerHTML = data.asks.map(([price, size]) => 
+                `<div class="flex justify-between text-red-400"><p>${price.toFixed(2)}</p><p>${size}</p></div>`
+            ).join('');
+            
+            bidsContainer.innerHTML = data.bids.map(([price, size]) => 
+                `<div class="flex justify-between text-green-400"><p>${price.toFixed(2)}</p><p>${size}</p></div>`
+            ).join('');
+        }
+
+        function renderNewTrade(trade, prepend = false) {
+            const container = document.getElementById('trade-feed-container');
+            const colorClass = trade.side.toLowerCase() === 'buy' ? 'text-green-400' : 'text-red-400';
+            const tradeElement = document.createElement('div');
+            tradeElement.className = `flex justify-between ${colorClass}`;
+            tradeElement.innerHTML = `<p>${trade.price.toFixed(2)}</p><p>${trade.quantity}</p><p>${trade.side.toUpperCase()}</p>`;
+
+            if (prepend) {
+                container.appendChild(tradeElement);
+            } else {
+                container.prepend(tradeElement);
+            }
+        }
+        
+        async function handleOrderSubmit(event) {
+            event.preventDefault();
+            const price = document.getElementById('price-input').value;
+            const quantity = document.getElementById('quantity-input').value;
+
+            if (!quantity || parseInt(quantity) <= 0) {
+                // Using a modal instead of alert()
+                showModal("Please enter a valid quantity.");
+                return;
+            }
+
+            const order = {
+                symbol: 'RELIANCE',
+                side: selectedSide,
+                type: price ? 'limit' : 'market',
+                quantity: quantity,
+                price: price || null,
+            };
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/order`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(order)
+                });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const result = await response.json();
+                console.log("Order submission result:", result);
+                document.getElementById('order-form').reset();
+            } catch (error) {
+                console.error("Error submitting order:", error);
+                showModal(`Error submitting order: ${error.message}`);
+            }
+        }
+
+        function setupOrderSideButtons() {
+            const buyBtn = document.getElementById('btn-buy');
+            const sellBtn = document.getElementById('btn-sell');
+
+            buyBtn.addEventListener('click', () => {
+                selectedSide = 'buy';
+                buyBtn.className = "w-full p-2 rounded-md bg-green-600/20 text-green-400 border border-green-600 font-semibold";
+                sellBtn.className = "w-full p-2 rounded-md bg-gray-700 text-gray-400 border border-gray-600 font-semibold transition hover:bg-red-600/40 hover:text-red-400 hover:border-red-600";
+            });
+
+            sellBtn.addEventListener('click', () => {
+                selectedSide = 'sell';
+                sellBtn.className = "w-full p-2 rounded-md bg-red-600/20 text-red-400 border border-red-600 font-semibold";
+                buyBtn.className = "w-full p-2 rounded-md bg-gray-700 text-gray-400 border border-gray-600 font-semibold transition hover:bg-green-600/40 hover:text-green-400 hover:border-green-600";
+            });
+        }
+        
+        // --- Main Initialization ---
+        window.onload = () => {
+            console.log("Window loaded. Initializing application.");
+            initializeChart();
+            fetchInitialData();
+            setupOrderSideButtons();
+            document.getElementById('order-form').addEventListener('submit', handleOrderSubmit);
+        };
+    </script>
+</body>
+</html>
+
