@@ -3,6 +3,7 @@ pyproject.toml
 setup.py
 engine/OrderBook.cpp
 engine/bindings.cpp
+tests/test_order_creation.py
 tradesim_engine.egg-info/PKG-INFO
 tradesim_engine.egg-info/SOURCES.txt
 tradesim_engine.egg-info/dependency_links.txt
