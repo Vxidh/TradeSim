@@ -7,6 +7,7 @@ import os
 import threading
 import sys
 import random
+from datetime import datetime, timezone 
 
 build_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'build', 'lib.win-amd64-cpython-313')
 if os.path.isdir(build_path):
@@ -30,15 +31,29 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
+# --- DATABASE MODELS ---
+
+# NEW: Define the Asset model to match schema.sql
+class Asset(db.Model):
+    __tablename__ = 'assets'
+    asset_id = db.Column(db.Integer, primary_key=True)
+    # Corrected column names to match schema.sql
+    ticker = db.Column(db.String(32), unique=True, nullable=False)
+    name = db.Column(db.String(255))
+    type = db.Column(db.String(50))
+
 class Trade(db.Model):
     __tablename__ = 'trades'
     trade_id = db.Column(db.BigInteger, primary_key=True)
     aggressing_order_id = db.Column(db.BigInteger)
     resting_order_id = db.Column(db.BigInteger)
-    asset_id = db.Column(db.Integer)
+    # UPDATED: Explicitly define the foreign key
+    asset_id = db.Column(db.Integer, db.ForeignKey('assets.asset_id'), nullable=False)
     price = db.Column(db.Float, nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
-    executed_at = db.Column(db.BigInteger, nullable=False) # Corrected column name
+    executed_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False)
+
+# --- END DATABASE MODELS ---
 
 engine_lock = threading.Lock()
 order_books = {
@@ -95,12 +110,9 @@ def get_market_data():
     for i in range(100):
         timestamp = current_time - (100 - i) * 60
         o = price + (i - 50) * 0.1 + random.uniform(-0.5, 0.5)
-        # Calculate close first
         c = o + random.uniform(-1, 1)
-        # Now calculate high and low based on the actual open and close
         h = max(o, c) + random.uniform(0, 2)
         l = min(o, c) - random.uniform(0, 2)
-        # Ensure high >= max(open, close) and low <= min(open, close)
         h = max(h, o, c)
         l = min(l, o, c)
         data.append({"time": timestamp, "open": round(o, 2), "high": round(h, 2), "low": round(l, 2), "close": round(c, 2)})
@@ -112,7 +124,6 @@ def get_trades():
     target_asset_id = symbol_to_asset_id_map.get(symbol)
 
     if target_asset_id:
-        # Corrected column name for ordering
         trades = Trade.query.filter_by(asset_id=target_asset_id).order_by(Trade.executed_at.desc()).all()
     else:
         trades = []
@@ -124,8 +135,7 @@ def get_trades():
             'price': t.price,
             'quantity': t.quantity,
             'side': 'N/A',
-            # Corrected attribute name for retrieving data
-            'timestamp': t.executed_at
+            'timestamp': int(t.executed_at.timestamp() * 1000) if t.executed_at else None
         } for t in trades
     ]
     return jsonify(result)
@@ -185,6 +195,8 @@ def place_order():
 
     if trades_made:
         for trade in trades_made:
+            trade_time = datetime.fromtimestamp(trade.timestamp / 1000.0, tz=timezone.utc)
+
             db_trade = Trade(
                 trade_id=trade.tradeId,
                 aggressing_order_id=trade.aggressingOrderId,
@@ -192,8 +204,7 @@ def place_order():
                 asset_id=target_asset_id,
                 price=trade.price,
                 quantity=trade.quantity,
-                # Corrected column name for saving
-                executed_at=trade.timestamp
+                executed_at=trade_time
             )
             db.session.add(db_trade)
 
@@ -203,11 +214,12 @@ def place_order():
                 'price': trade.price,
                 'quantity': trade.quantity,
                 'side': 'Buy' if side == tradesim_engine.Side.Buy else 'Sell',
-                'timestamp': trade.timestamp # Frontend expects 'timestamp'
+                'timestamp': trade.timestamp 
             }
             socketio.emit('new_trade', trade_dict)
 
-        db.session.commit()
+        # This will now fail if the assets table is not populated
+        db.session.commit() 
 
     socketio.emit('order_book_update', get_current_orderbook_state(book))
 
@@ -220,6 +232,38 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     print('Client disconnected')
+
+# NEW: Function to populate the assets table
+def pre_populate_assets():
+    print("Pre-populating assets table...")
+    # Simple mapping from symbol to full name
+    asset_details = {
+        'RELIANCE': ('Reliance Industries', 'Equity'),
+        'AAPL': ('Apple Inc.', 'Equity'),
+        'MSFT': ('Microsoft Corp.', 'Equity'),
+        'GOOG': ('Alphabet Inc.', 'Equity'),
+        'AMZN': ('Amazon.com, Inc.', 'Equity'),
+        'META': ('Meta Platforms, Inc.', 'Equity'),
+        'TSLA': ('Tesla, Inc.', 'Equity'),
+    }
+
+    for symbol, asset_id in symbol_to_asset_id_map.items():
+        # Check if asset already exists by primary key
+        exists = db.session.get(Asset, asset_id)
+        if not exists:
+            print(f"Adding asset {symbol} (ID: {asset_id}) to DB.")
+            # Use different var names to avoid shadowing 'name' and 'type'
+            asset_name_val, asset_type_val = asset_details.get(symbol, (symbol, 'Equity'))
+            new_asset = Asset(
+                asset_id=asset_id,
+                ticker=symbol,       # Use 'ticker'
+                name=asset_name_val,   # Use 'name'
+                type=asset_type_val    # Use 'type'
+            )
+            db.session.add(new_asset)
+    
+    db.session.commit()
+    print("Assets table pre-populated.")
 
 def pre_populate_books():
     print("Pre-populating C++ order books...")
@@ -257,6 +301,8 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         print('Database tables created or already exist.')
+        # ADDED: Call the asset pre-population function on startup
+        pre_populate_assets() 
 
     pre_populate_books()
 

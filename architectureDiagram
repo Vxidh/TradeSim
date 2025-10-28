@@ -1,0 +1,69 @@
+graph TD
+    %% Define styles
+    classDef frontend fill:#22577A,stroke:#333,stroke-width:2px,color:#fff;
+    classDef backend fill:#577C8A,stroke:#333,stroke-width:2px,color:#fff;
+    classDef cpp fill:#E85D04,stroke:#333,stroke-width:2px,color:#fff;
+    classDef db fill:#80B918,stroke:#333,stroke-width:2px,color:#fff;
+    classDef user fill:#fff,stroke:#333,stroke-width:2px,color:#333;
+
+    %% --- 1. The User ---
+    subgraph " "
+        U(User)
+        class U user;
+    end
+    
+    %% --- 2. The Frontend ---
+    subgraph "Frontend (Browser)"
+        FE[<b>tradesim.html</b><br>HTML / TailwindCSS<br>Lightweight Charts<br>Socket.IO Client]
+        class FE frontend;
+    end
+    
+    %% --- 3. The Backend ---
+    subgraph "Backend Server (server.py)"
+        direction LR
+        
+        API[<b>Flask REST API</b><br>/api/order<br>/api/trades<br>/api/orderbook]
+        WS[<b>Socket.IO Server</b><br>Real-time Updates]
+        ORM[<b>SQLAlchemy ORM</b>]
+        
+        %% This is the C++ module, but it lives *inside* the Python process
+        subgraph "tradesim_engine (Loaded C++ Module)"
+            Bridge[<b>pybind11 Bridge</b><br>(bindings.cpp)]
+            Engine[<b>C++ Matching Engine</b><br>(OrderBook.cpp)<br>std::map, std::list]
+        end
+        
+        class API,WS,ORM backend;
+        class Bridge,Engine cpp;
+    end
+
+    %% --- 4. The Database ---
+    subgraph "Database"
+        DB[(<b>PostgreSQL DB</b><br>neondb cloud<br>Tables: assets, trades)]
+        class DB db;
+    end
+
+    %% --- FLOWS ---
+
+    %% Flow 1: Order Submission (Solid Line)
+    U -- "Clicks 'Place Order'" --> FE
+    FE -- "<b>1. POST /api/order</b><br>(HTTP Request)" --> API
+    API -- "<b>2. Calls addOrder()</b>" --> Bridge
+    Bridge -- "<b>3. C++ Matching Logic</b>" --> Engine
+    Engine -- "<b>4. Returns executed trades[]</b>" --> Bridge
+    Bridge -- "<b>5. Returns trades[] to Python</b>" --> API
+    API -- "<b>6a. Saves trades to DB</b>" --> ORM
+    ORM -- "<b>7. INSERT INTO trades</b>" --> DB
+    
+    %% Flow 2: Real-time Updates (Dotted Line)
+    API -- "<b>6b. Emits 'new_trade'</b>" --> WS
+    WS -.-> "<b>8. Pushes 'new_trade' & 'order_book_update'</b><br>(WebSocket)" .- FE
+    FE -.-> "Updates Trade Feed & Order Book" .- U
+
+    %% Flow 3: Initial Data Load (Dashed Line)
+    U -- "Page Load / Select Symbol" --> FE
+    FE -.-> "<b>GET /api/trades, /orderbook</b><br>(HTTP Request)" .-> API
+    API -.-> "Fetches data" .-> ORM
+    ORM -.-> "<b>SELECT * FROM trades, assets</b>" .-> DB
+    DB -.-> "Returns data" .-> ORM
+    ORM -.-> "Returns data" .-> API
+    API -.-> "Returns JSON" .-> FE

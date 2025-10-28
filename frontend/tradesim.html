@@ -1,6 +1,6 @@
 <!--
     TradeSim Frontend
-    v4: Final version with locked library version and enhanced debugging.
+    v5: Fixed trade feed update race condition
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -89,9 +89,16 @@
         <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
             <h2 class="text-lg font-semibold mb-2 text-gray-300">Order Book</h2>
             <div id="order-book-container" class="font-mono text-sm">
-                <div id="asks-container"></div>
+                <!-- Asks (Sell Orders) - Red -->
+                <div id="asks-container">
+                    <!-- Dynamic content will be injected here -->
+                </div>
+                <!-- Spread -->
                 <div class="py-1 my-1 border-t border-b border-gray-700 text-center text-gray-500" id="spread-container">--.--</div>
-                <div id="bids-container"></div>
+                <!-- Bids (Buy Orders) - Green -->
+                <div id="bids-container">
+                    <!-- Dynamic content will be injected here -->
+                </div>
             </div>
         </div>
 
@@ -99,20 +106,26 @@
         <div class="bg-gray-800 p-4 rounded-lg shadow-lg flex flex-col" style="height:500px; min-height:300px; justify-content:flex-start;">
             <h2 class="text-lg font-semibold mb-2 text-gray-300">Trade Feed</h2>
             <div id="trade-feed-container" class="font-mono text-sm space-y-1 overflow-y-auto" style="flex:1; min-height:0; align-items:flex-start;">
+                <!-- Dynamic content will be injected here -->
             </div>
         </div>
     </main>
-
+    
+    <!-- Modal Placeholder -->
+    <!-- TODO: Implement a prettier modal -->
+    
     <script>
         // --- CONFIGURATION ---
-    const API_BASE_URL = 'http://127.0.0.1:5000/api';
-    // --- GLOBAL STATE ---
-    let chart = null;
-    let candlestickSeries = null;
-    let selectedSide = 'buy';
-    let selectedSymbol = 'RELIANCE';
-    // --- Socket.IO ---
-    const socket = io('http://127.0.0.1:5000');
+        const API_BASE_URL = 'http://127.0.0.1:5000/api';
+        
+        // --- GLOBAL STATE ---
+        let chart = null;
+        let candlestickSeries = null;
+        let selectedSide = 'buy';
+        let selectedSymbol = 'RELIANCE';
+        
+        // --- Socket.IO ---
+        const socket = io('http://127.0.0.1:5000');
 
         function initializeChart() {
             console.log("Attempting to initialize chart...");
@@ -125,6 +138,13 @@
             console.log("LightweightCharts library found.");
 
             const chartContainer = document.getElementById('chart-container');
+            if (!chartContainer) {
+                console.error("Chart container not found!");
+                return;
+            }
+            // Clear container before creating new chart
+            chartContainer.innerHTML = '';
+            
             chart = LightweightCharts.createChart(chartContainer, {
                 width: chartContainer.clientWidth,
                 height: chartContainer.clientHeight,
@@ -147,6 +167,7 @@
             });
             console.log("Candlestick series added successfully.");
 
+            // Add resize observer
             new ResizeObserver(entries => {
                 if (entries.length === 0 || entries[0].target !== chartContainer) { return; }
                 const newRect = entries[0].contentRect;
@@ -155,16 +176,12 @@
         }
 
         async function fetchInitialData() {
-            // ... (rest of the code is unchanged) ...
-        }
-        
-        // ... (All other functions remain the same) ...
-
-        async function fetchInitialData() {
             try {
+                console.log(`Fetching initial data for ${selectedSymbol}...`);
                 document.getElementById('market-title').textContent = `Market: ${selectedSymbol} (1 min)`;
+                
                 const [marketDataRes, orderBookRes, tradesRes] = await Promise.all([
-                    fetch(`${API_BASE_URL}/market_data`),
+                    fetch(`${API_BASE_URL}/market_data?symbol=${selectedSymbol}`), // Pass symbol to market data
                     fetch(`${API_BASE_URL}/orderbook?symbol=${selectedSymbol}`),
                     fetch(`${API_BASE_URL}/trades?symbol=${selectedSymbol}`)
                 ]);
@@ -173,39 +190,28 @@
                     throw new Error('Failed to fetch initial data');
                 }
 
+                // --- Market Data & Chart ---
                 const marketData = await marketDataRes.json();
-                // Re-initialize chart for new symbol
-                const chartContainer = document.getElementById('chart-container');
-                chartContainer.innerHTML = '';
-                chart = LightweightCharts.createChart(chartContainer, {
-                    width: chartContainer.clientWidth,
-                    height: chartContainer.clientHeight,
-                    layout: { backgroundColor: '#1F2937', textColor: 'rgba(255, 255, 255, 0.9)' },
-                    grid: { vertLines: { color: '#2A3443' }, horzLines: { color: '#2A3443' } },
-                    timeScale: { timeVisible: true, secondsVisible: false },
-                });
-                candlestickSeries = chart.addCandlestickSeries({
-                    upColor: '#22c55e', downColor: '#ef4444',
-                    borderDownColor: '#ef4444', borderUpColor: '#22c55e',
-                    wickDownColor: '#ef4444', wickUpColor: '#22c55e',
-                });
-                candlestickSeries.setData(marketData);
+                if (candlestickSeries) {
+                    candlestickSeries.setData(marketData);
+                    chart.timeScale().fitContent();
+                } else {
+                    console.error("Candlestick series not initialized, cannot set data.");
+                }
 
-                new ResizeObserver(entries => {
-                    if (entries.length === 0 || entries[0].target !== chartContainer) { return; }
-                    const newRect = entries[0].contentRect;
-                    chart.applyOptions({ width: newRect.width, height: newRect.height });
-                }).observe(chartContainer);
-
+                // --- Order Book ---
                 const orderBookData = await orderBookRes.json();
                 renderOrderBook(orderBookData);
 
+                // --- Trade Feed ---
                 const tradesData = await tradesRes.json();
-                document.getElementById('trade-feed-container').innerHTML = '';
-                tradesData.forEach(trade => renderNewTrade(trade, true));
+                const tradeContainer = document.getElementById('trade-feed-container');
+                tradeContainer.innerHTML = ''; // Clear existing trades
+                tradesData.forEach(trade => renderNewTrade(trade, true)); // 'true' to append at bottom
 
             } catch (error) {
                 console.error("Error fetching initial data:", error);
+                // showModal(`Error fetching data: ${error.message}`);
             }
         }
         
@@ -229,20 +235,30 @@
         });
 
         socket.on('new_trade', (data) => {
-            renderNewTrade(data);
-            if (candlestickSeries && data.timestamp) {
-                const lastBar = {
-                    time: Math.floor(data.timestamp / 1000),
-                    open: data.price,
-                    high: data.price,
-                    low: data.price,
-                    close: data.price
-                };
-                candlestickSeries.update(lastBar);
+            console.log("New trade received:", data);
+            // Only render trade if it's for the currently selected symbol
+            if (data.symbol === selectedSymbol) {
+                renderNewTrade(data, false); // 'false' to prepend at top
+                
+                // Update the chart with the new trade price
+                if (candlestickSeries && data.timestamp) {
+                    // Create a simple bar for the trade
+                    const tradeTime = Math.floor(data.timestamp / 1000); // Convert ms to s
+                    // This is a simplified update, assumes trade is the new 'close'
+                    candlestickSeries.update({
+                        time: tradeTime,
+                        close: data.price,
+                        // You might need to fetch OHLC for this time bucket
+                        // For a real-time feed, you'd aggregate ticks into bars
+                    });
+                }
             }
         });
 
         socket.on('order_book_update', (data) => {
+            // Note: Server doesn't send symbol here, assumes client knows
+            // This will update the order book regardless of selected symbol
+            // For a multi-symbol app, the server should send the symbol in the payload
             renderOrderBook(data);
         });
 
@@ -250,27 +266,61 @@
             const bidsContainer = document.getElementById('bids-container');
             const asksContainer = document.getElementById('asks-container');
             
+            // Render asks (sell orders), descending from top
             asksContainer.innerHTML = data.asks.map(([price, size]) => 
                 `<div class="flex justify-between text-red-400"><p>${price.toFixed(2)}</p><p>${size}</p></div>`
             ).join('');
             
+            // Render bids (buy orders), descending from top
             bidsContainer.innerHTML = data.bids.map(([price, size]) => 
                 `<div class="flex justify-between text-green-400"><p>${price.toFixed(2)}</p><p>${size}</p></div>`
             ).join('');
+            
+            // Update Spread
+            const spreadContainer = document.getElementById('spread-container');
+            if (data.asks.length > 0 && data.bids.length > 0) {
+                const bestAsk = data.asks[0][0];
+                const bestBid = data.bids[0][0];
+                const spread = (bestAsk - bestBid).toFixed(2);
+                spreadContainer.textContent = `Spread: ${spread}`;
+            } else {
+                spreadContainer.textContent = "--.--";
+            }
         }
 
-        function renderNewTrade(trade, prepend = false) {
+        function renderNewTrade(trade, append = false) {
             const container = document.getElementById('trade-feed-container');
-            const colorClass = trade.side.toLowerCase() === 'buy' ? 'text-green-400' : 'text-red-400';
+            if (!container) {
+                console.error("Trade feed container not found!");
+                return;
+            }
+            
+            // Use 'side' from trade data, default to 'buy' if not present
+            const side = trade.side ? trade.side.toLowerCase() : 'buy';
+            const colorClass = side === 'buy' ? 'text-green-400' : 'text-red-400';
             const tradeElement = document.createElement('div');
             tradeElement.className = `flex justify-between ${colorClass}`;
-            tradeElement.innerHTML = `<p>${trade.price.toFixed(2)}</p><p>${trade.quantity}</p><p>${trade.side.toUpperCase()}</p>`;
+            
+            // Ensure data is valid before calling toFixed
+            const price = typeof trade.price === 'number' ? trade.price.toFixed(2) : '0.00';
+            const quantity = trade.quantity || 0;
+            const sideText = side.toUpperCase();
+            
+            tradeElement.innerHTML = `<p>${price}</p><p>${quantity}</p><p>${sideText}</p>`;
 
-            if (prepend) {
+            if (append) {
+                // Add to bottom (for initial load)
                 container.appendChild(tradeElement);
             } else {
+                // Add to top (for new trades)
                 container.prepend(tradeElement);
             }
+        }
+        
+        // This is a placeholder. You need to implement this.
+        function showModal(message) {
+            console.warn("showModal not implemented. Message:", message);
+            alert(message); // Fallback to alert
         }
         
         async function handleOrderSubmit(event) {
@@ -301,7 +351,12 @@
                 const result = await response.json();
                 console.log("Order submission result:", result);
                 document.getElementById('order-form').reset();
-                fetchInitialData();
+                
+                // *** THE FIX: ***
+                // This line was causing the trade feed to be wiped.
+                // Real-time updates now happen *only* via Socket.IO.
+                // fetchInitialData(); 
+                
             } catch (error) {
                 console.error("Error submitting order:", error);
                 showModal(`Error submitting order: ${error.message}`);
@@ -334,10 +389,12 @@
             document.getElementById('order-form').addEventListener('submit', handleOrderSubmit);
             document.getElementById('symbol-select').addEventListener('change', (e) => {
                 selectedSymbol = e.target.value;
+                console.log(`Symbol changed to: ${selectedSymbol}`);
+                // Re-initialize chart and fetch all data for the new symbol
+                initializeChart(); 
                 fetchInitialData();
             });
         };
     </script>
 </body>
 </html>
-
