@@ -11,7 +11,10 @@ class OrderBook {
 public:
     using OrderPtr = std::unique_ptr<Order>;
 
-    OrderBook(std::string symbol) : symbol_(std::move(symbol)), next_trade_id_(1) {}
+    // Construct an OrderBook for a symbol. The implementation seeds
+    // next_trade_id_ on construction (defined in the .cpp) so the engine
+    // doesn't restart trade ids at 1 on every server start.
+    explicit OrderBook(std::string symbol);
 
     // add/cancel
     std::vector<Trade> addOrder(OrderPtr order);
@@ -23,7 +26,7 @@ public:
 
 private:
     std::string symbol_;
-    int32_t next_trade_id_;
+    int64_t next_trade_id_;
 
     std::map<double, PriceLevel, std::greater<double>> bids_;
     std::map<double, PriceLevel> asks_;

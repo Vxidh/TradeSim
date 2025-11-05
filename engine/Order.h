@@ -48,7 +48,7 @@ struct Order {
 };
 
 struct Trade {
-    int32_t tradeId;
+    int64_t tradeId; // use 64-bit ids to match persistent DB BigInteger
     int32_t aggressingOrderId;
     int32_t restingOrderId;
     std::string symbol;

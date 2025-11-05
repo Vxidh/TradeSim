@@ -197,6 +197,23 @@ def place_order():
         for trade in trades_made:
             trade_time = datetime.fromtimestamp(trade.timestamp / 1000.0, tz=timezone.utc)
 
+            # Avoid inserting duplicate trades with the same trade_id which can
+            # cause a primary key violation if the engine re-uses ids across runs.
+            exists = Trade.query.filter_by(trade_id=trade.tradeId).first()
+            if exists:
+                print(f"Skipping insert: trade with trade_id={trade.tradeId} already exists in DB.")
+                # Still emit the trade to clients so UI updates aren't affected
+                trade_dict = {
+                    'trade_id': trade.tradeId,
+                    'symbol': symbol,
+                    'price': trade.price,
+                    'quantity': trade.quantity,
+                    'side': 'Buy' if side == tradesim_engine.Side.Buy else 'Sell',
+                    'timestamp': trade.timestamp
+                }
+                socketio.emit('new_trade', trade_dict)
+                continue
+
             db_trade = Trade(
                 trade_id=trade.tradeId,
                 aggressing_order_id=trade.aggressingOrderId,
@@ -218,8 +235,8 @@ def place_order():
             }
             socketio.emit('new_trade', trade_dict)
 
-        # This will now fail if the assets table is not populated
-        db.session.commit() 
+        # Commit all new trades; skipping duplicates avoids primary key conflicts.
+        db.session.commit()
 
     socketio.emit('order_book_update', get_current_orderbook_state(book))
 

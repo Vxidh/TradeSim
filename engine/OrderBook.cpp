@@ -12,6 +12,11 @@ static int64_t currentTimestamp() {
            ).count();
 }
 
+// Construct an OrderBook and seed the trade id counter with a timestamp-based
+// value so ids are unlikely to collide with previously persisted DB ids.
+OrderBook::OrderBook(std::string symbol)
+    : symbol_(std::move(symbol)), next_trade_id_(currentTimestamp()) {}
+
 vector<Trade> OrderBook::addOrder(OrderPtr order) {
     Order* order_ptr = order.get();
     orders_by_id_[order->orderId] = std::move(order);
